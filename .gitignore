@@ -1,0 +1,27 @@
+# API keys - never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/build/
+
+# Output files
+output/
+*.docx
+test_output.docx
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/

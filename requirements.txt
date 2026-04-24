@@ -1,0 +1,8 @@
+anthropic
+python-dotenv
+yfinance
+requests
+numpy
+python-docx
+fastapi
+uvicorn
