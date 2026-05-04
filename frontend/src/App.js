@@ -17,7 +17,7 @@ export default function App() {
     { id: 'portfolio', label: 'Portfolio' },
     { id: 'watchlist', label: 'Watchlist' },
     { id: 'earnings',  label: 'Earnings Decoder', badge: 'NEW' },
-    { id: 'prep',      label: 'Earnings Prep' },
+    { id: 'prep',      label: 'Earnings Prep', badge: 'SOON' },
     { id: 'reports',   label: 'Reports' },
   ]
 
@@ -111,9 +111,15 @@ export default function App() {
                 fontSize: '9px',
                 padding: '2px 6px',
                 borderRadius: '99px',
-                background: '#0f3d2a',
-                color: '#1D9E75',
-                fontWeight: '600',
+                fontWeight: '500',
+                background: item.badge === 'LIVE' ? '#0f3d2a' :
+                            item.badge === 'NEW'  ? 'rgba(29,158,117,0.2)' :
+                            item.badge === 'SOON' ? 'rgba(100,116,139,0.2)' :
+                            'rgba(29,158,117,0.2)',
+                color: item.badge === 'LIVE' ? '#1D9E75' :
+                       item.badge === 'NEW'  ? '#1D9E75' :
+                       item.badge === 'SOON' ? '#94a3b8' :
+                       '#1D9E75',
               }}>
                 {item.badge}
               </span>

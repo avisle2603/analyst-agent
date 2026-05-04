@@ -48,6 +48,87 @@ function parseNewsItems(text) {
     }))
 }
 
+function parseRiskAssessment(text) {
+  if (!text) return []
+  const clean = stripMd(stripRiskEmoji(text))
+  const riskPatterns = [
+    'Valuation Risk', 'Earnings Risk', 'Dividend Risk', 'Trend Risk',
+    'Debt Risk', 'Sector Risk', 'Liquidity Risk', 'Regulatory Risk',
+    'Market Risk', 'Concentration Risk', 'Growth Risk', 'Management Risk',
+  ]
+  const rows = []
+  riskPatterns.forEach(pattern => {
+    const idx = clean.indexOf(pattern)
+    if (idx !== -1) {
+      const after = clean.slice(idx + pattern.length)
+      const levelMatch = after.match(/\s*(LOW RISK|MEDIUM RISK|HIGH RISK|LOW|MEDIUM|HIGH)/i)
+      const level = levelMatch ? levelMatch[1].replace(/ RISK/i, '').toUpperCase() : 'MEDIUM'
+      const detailStart = levelMatch ? after.indexOf(levelMatch[0]) + levelMatch[0].length : 0
+      let detail = after.slice(detailStart)
+      riskPatterns.forEach(p => {
+        const nextIdx = detail.indexOf(p)
+        if (nextIdx > 0) detail = detail.slice(0, nextIdx)
+      })
+      detail = detail.replace(/^[\s\-—]+/, '').trim()
+      if (detail.length > 0) rows.push({ factor: pattern, level, detail })
+    }
+  })
+  if (rows.length === 0) {
+    const parts = clean.split(/(?=[A-Z][a-z]+ Risk)/)
+    parts.forEach(part => {
+      const levelMatch = part.match(/(LOW RISK|MEDIUM RISK|HIGH RISK|LOW|MEDIUM|HIGH)/i)
+      if (levelMatch) {
+        const factor = part.slice(0, part.indexOf(levelMatch[0])).trim()
+        const level = levelMatch[1].replace(/ RISK/i, '').toUpperCase()
+        const detail = part.slice(part.indexOf(levelMatch[0]) + levelMatch[0].length).replace(/^[\s\-—]+/, '').trim()
+        if (factor && detail) rows.push({ factor, level, detail })
+      }
+    })
+  }
+  return rows
+}
+
+function parseTrendAnalysis(text) {
+  if (!text) return { metrics: [], takeaway: '' }
+  const clean = stripMd(text)
+  let takeaway = ''
+  let metricsText = clean
+  const takeawayIdx = clean.search(/takeaway[:\s]/i)
+  if (takeawayIdx !== -1) {
+    takeaway = clean.slice(takeawayIdx).replace(/^takeaway[:\s]*/i, '').trim()
+    metricsText = clean.slice(0, takeawayIdx)
+  }
+  const metricPatterns = [
+    { label: '1-Year Price Change',   regex: /1-?year price change\s+([+-]?[\d.]+%)/i },
+    { label: 'Avg. Monthly Return',   regex: /avg\.?\s*monthly return\s+([+-]?[\d.]+%)/i },
+    { label: 'Best Month',            regex: /best month\s+([A-Za-z]+ \d{4}[:\s]+[+-]?[\d.]+%)/i },
+    { label: 'Worst Month',           regex: /worst month\s+([A-Za-z]+ \d{4}[:\s]+[+-]?[\d.]+%)/i },
+    { label: 'Annualized Volatility', regex: /annualized volatility\s+([\d.]+%)/i },
+    { label: 'Trend Signal',          regex: /trend signal\s+([A-Za-z]+[\s()A-Za-z<>-]*)/i },
+  ]
+  const metrics = []
+  metricPatterns.forEach(p => {
+    const match = clean.match(p.regex)
+    if (match) metrics.push({ label: p.label, value: match[1].replace(/\s+/g, ' ').trim() })
+  })
+  if (metrics.length === 0) {
+    const keywords = [
+      '1-Year Price Change', 'Avg. Monthly Return', 'Best Month',
+      'Worst Month', 'Annualized Volatility', 'Trend Signal',
+    ]
+    keywords.forEach((kw, i) => {
+      const idx = metricsText.indexOf(kw)
+      if (idx !== -1) {
+        const nextKw = keywords.slice(i + 1).find(k => metricsText.indexOf(k) > idx)
+        const end = nextKw ? metricsText.indexOf(nextKw) : metricsText.length
+        const value = metricsText.slice(idx + kw.length, end).replace(/^[\s:]+/, '').trim()
+        if (value) metrics.push({ label: kw, value })
+      }
+    })
+  }
+  return { metrics, takeaway }
+}
+
 function parseBrief(brief) {
   if (!brief) return {}
 
@@ -149,10 +230,12 @@ function parseBrief(brief) {
     summary:           stripMd(get('summary', 'overview', 'executive')),
     keyMetrics:        parseKeyMetrics(get('key metric', 'metric', 'financial')),
     trend:             stripMd(get('trend', 'technical', 'momentum')),
+    trendText:         get('trend analysis', 'trend'),
     competitors:       parseCompetitors(compText),
     competitorHeaders: (() => { const rows = parseTable(compText); return rows.length > 0 ? rows[0].map(stripMd) : [] })(),
     newsItems:         parseNewsItems(get('news', 'sentiment', 'headlines')),
     risk:              stripMd(get('risk', 'concern', 'downside')),
+    riskText:          get('risk', 'concern', 'downside'),
     recommendation:    stripMd(get('recommendation', 'verdict', 'conclusion', 'action')),
     toolsCalled:       TOOLS,
   }
@@ -402,6 +485,8 @@ export default function Dashboard({ pendingQuery, onQueryConsumed }) {
   )
 
   // ── Results ──────────────────────────────────────────────────────
+  const riskRows  = parsed ? parseRiskAssessment(parsed.riskText || parsed.risk || '') : []
+  const trendData = parsed ? parseTrendAnalysis(parsed.trendText || parsed.trend || '') : { metrics: [], takeaway: '' }
   if (brief && parsed) return (
     <div style={S.page}>
 
@@ -484,10 +569,44 @@ export default function Dashboard({ pendingQuery, onQueryConsumed }) {
       )}
 
       {/* Trend Analysis */}
-      {parsed.trend && (
-        <div style={S.card}>
-          <SectionHeader title="Trend Analysis" />
-          <p style={{ color: '#cbd5e1', fontSize: '15px', lineHeight: '1.8', margin: 0 }}>{parsed.trend}</p>
+      {(trendData.metrics.length > 0 || trendData.takeaway || parsed.trend) && (
+        <div style={{ background: '#161b27', border: '1px solid #2d3748', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '16px', fontWeight: '600', color: '#e2e8f0', marginBottom: '16px', paddingBottom: '10px', borderBottom: '1px solid #2d3748' }}>
+            Trend Analysis
+          </div>
+          {trendData.metrics.length > 0 ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: trendData.takeaway ? '16px' : '0' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2d3748' }}>
+                  <th style={{ textAlign: 'left', padding: '8px 12px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: '600', width: '45%' }}>Indicator</th>
+                  <th style={{ textAlign: 'right', padding: '8px 12px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: '600' }}>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trendData.metrics.map((row, i) => {
+                  const isNeg = row.value.includes('-') && !row.value.toLowerCase().includes('signal')
+                  const isPos = row.value.includes('+')
+                  const isTrend = row.label === 'Trend Signal'
+                  return (
+                    <tr key={i} style={{ borderBottom: i < trendData.metrics.length - 1 ? '1px solid #1e2535' : 'none', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                      <td style={{ padding: '12px', fontSize: '14px', color: '#94a3b8' }}>{row.label}</td>
+                      <td style={{ padding: '12px', textAlign: 'right', fontSize: '14px', fontWeight: '600', fontFamily: isTrend ? 'inherit' : 'monospace', color: isTrend ? '#e2e8f0' : isNeg ? '#E24B4A' : isPos ? '#1D9E75' : '#e2e8f0' }}>
+                        {row.value.replace(/🔴/g, '').replace(/🟢/g, '').trim()}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          ) : parsed.trend ? (
+            <p style={{ color: '#cbd5e1', fontSize: '15px', lineHeight: '1.8', margin: 0, marginBottom: trendData.takeaway ? '16px' : '0' }}>{parsed.trend}</p>
+          ) : null}
+          {trendData.takeaway && (
+            <div style={{ background: 'rgba(29,158,117,0.05)', borderLeft: '3px solid #1D9E75', borderRadius: '0 8px 8px 0', padding: '12px 16px' }}>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#1D9E75', fontWeight: '600', marginBottom: '6px' }}>Takeaway</div>
+              <p style={{ fontSize: '13px', color: '#94a3b8', lineHeight: '1.7', margin: 0 }}>{stripMd(trendData.takeaway)}</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -512,65 +631,110 @@ export default function Dashboard({ pendingQuery, onQueryConsumed }) {
                 </tr>
               </thead>
               <tbody>
-                {parsed.competitors.map((row, i) => (
-                  <tr key={i} style={{
-                    borderBottom: '1px solid #1e2535',
-                    background: i === 0 ? 'rgba(29,158,117,0.08)' : 'transparent',
-                  }}>
-                    {parsed.competitorHeaders.map((h, j) => (
-                      <td key={j} style={{
-                        color: j === 0 ? (i === 0 ? '#1D9E75' : '#e2e8f0') : '#94a3b8',
-                        fontSize: j === 0 ? '15px' : '14px',
-                        fontWeight: j === 0 ? '600' : '400',
-                        fontFamily: j > 0 ? 'monospace' : 'inherit',
-                        padding: '12px 0',
-                        textAlign: j === 0 ? 'left' : 'right',
-                      }}>
-                        {row[h] || '—'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {parsed.competitors.map((row, i) => {
+                  const ticker = parsed.ticker ? parsed.ticker.toUpperCase() : ''
+                  const isActive = ticker ? Object.values(row).some(cell => {
+                    const t = String(cell).toUpperCase()
+                    return t === ticker || t.includes(ticker) ||
+                           t.startsWith(ticker + ' ') || t.startsWith(ticker + '(') ||
+                           t.includes('(' + ticker + ')')
+                  }) : false
+                  return (
+                    <tr key={i} style={{
+                      borderBottom: i < parsed.competitors.length - 1 ? '1px solid #1e2535' : 'none',
+                      borderLeft: isActive ? '3px solid #1D9E75' : '3px solid transparent',
+                      background: isActive ? 'rgba(29,158,117,0.08)' : i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)',
+                    }}>
+                      {parsed.competitorHeaders.map((h, j) => (
+                        <td key={j} style={{
+                          color: j === 0 ? (isActive ? '#1D9E75' : '#e2e8f0') : '#94a3b8',
+                          fontSize: j === 0 ? '14px' : '13px',
+                          fontWeight: j === 0 ? '600' : '400',
+                          fontFamily: j > 0 ? 'monospace' : 'inherit',
+                          padding: '12px 10px',
+                          textAlign: j === 0 ? 'left' : 'right',
+                        }}>
+                          {stripMd(String(row[h] || '—'))}
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* News + Risk */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-        <div style={S.card}>
-          <SectionHeader title="News & Sentiment" />
-          {parsed.newsItems.length > 0
-            ? parsed.newsItems.map((n, i) => (
-              <div key={i} style={{ padding: '12px 0', borderBottom: i < parsed.newsItems.length - 1 ? '1px solid #1e2535' : 'none' }}>
-                <span style={{
-                  fontSize: '11px', padding: '2px 8px', borderRadius: '99px',
-                  marginBottom: '6px', display: 'inline-block',
-                  background: n.sentiment === 'positive' ? '#0f3d2a'
-                            : n.sentiment === 'negative' ? '#3d0f0f' : '#1e293b',
-                  color: n.sentiment === 'positive' ? '#1D9E75'
-                       : n.sentiment === 'negative' ? '#E24B4A' : '#94a3b8',
-                }}>
-                  {n.sentiment}
-                </span>
-                <div style={{ color: '#e2e8f0', fontSize: '14px', lineHeight: '1.6', marginTop: '4px' }}>
-                  {n.headline}
-                </div>
+      {/* News */}
+      <div style={S.card}>
+        <SectionHeader title="News & Sentiment" />
+        {parsed.newsItems.length > 0
+          ? parsed.newsItems.map((n, i) => (
+            <div key={i} style={{ padding: '12px 0', borderBottom: i < parsed.newsItems.length - 1 ? '1px solid #1e2535' : 'none' }}>
+              <span style={{
+                fontSize: '11px', padding: '2px 8px', borderRadius: '99px',
+                marginBottom: '6px', display: 'inline-block',
+                background: n.sentiment === 'positive' ? '#0f3d2a'
+                          : n.sentiment === 'negative' ? '#3d0f0f' : '#1e293b',
+                color: n.sentiment === 'positive' ? '#1D9E75'
+                     : n.sentiment === 'negative' ? '#E24B4A' : '#94a3b8',
+              }}>
+                {n.sentiment}
+              </span>
+              <div style={{ color: '#e2e8f0', fontSize: '14px', lineHeight: '1.6', marginTop: '4px' }}>
+                {n.headline}
               </div>
-            ))
-            : <p style={{ color: '#64748b', fontSize: '14px', margin: 0 }}>No headlines extracted</p>
-          }
-        </div>
-
-        <div style={S.card}>
-          <SectionHeader title="Risk Assessment" />
-          {parsed.risk
-            ? renderRecommendation(stripRiskEmoji(parsed.risk))
-            : <p style={{ color: '#64748b', fontSize: '14px', margin: 0 }}>No risk data extracted</p>
-          }
-        </div>
+            </div>
+          ))
+          : <p style={{ color: '#64748b', fontSize: '14px', margin: 0 }}>No headlines extracted</p>
+        }
       </div>
+
+      {/* Risk Assessment */}
+      {riskRows.length > 0 ? (
+        <div style={{ background: '#161b27', border: '1px solid #2d3748', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '16px', fontWeight: '600', color: '#e2e8f0', marginBottom: '16px', paddingBottom: '10px', borderBottom: '1px solid #2d3748' }}>
+            Risk Assessment
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #2d3748' }}>
+                <th style={{ textAlign: 'left', padding: '8px 12px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: '600', width: '25%' }}>Risk Factor</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: '600', width: '15%' }}>Level</th>
+                <th style={{ textAlign: 'left', padding: '8px 12px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: '600' }}>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {riskRows.map((row, i) => (
+                <tr key={i} style={{ borderBottom: i < riskRows.length - 1 ? '1px solid #1e2535' : 'none', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                  <td style={{ padding: '12px', fontSize: '14px', color: '#e2e8f0', fontWeight: '500' }}>{row.factor}</td>
+                  <td style={{ padding: '12px', textAlign: 'center' }}>
+                    <span style={{
+                      display: 'inline-block', padding: '3px 10px', borderRadius: '99px',
+                      fontSize: '11px', fontWeight: '600',
+                      background: row.level === 'HIGH' ? '#3d0f0f' : row.level === 'LOW' ? '#0f3d2a' : '#3d2a0f',
+                      color:      row.level === 'HIGH' ? '#E24B4A' : row.level === 'LOW' ? '#1D9E75' : '#EF9F27',
+                    }}>
+                      {row.level}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px', fontSize: '13px', color: '#94a3b8', lineHeight: '1.5' }}>{row.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (parsed.risk || parsed.riskText) ? (
+        <div style={{ background: '#161b27', border: '1px solid #2d3748', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '16px', fontWeight: '600', color: '#e2e8f0', marginBottom: '16px', paddingBottom: '10px', borderBottom: '1px solid #2d3748' }}>
+            Risk Assessment
+          </div>
+          <p style={{ fontSize: '14px', color: '#94a3b8', lineHeight: '1.7', margin: 0 }}>
+            {stripMd(parsed.riskText || parsed.risk)}
+          </p>
+        </div>
+      ) : null}
 
       {/* Recommendation */}
       {parsed.recommendation && (
